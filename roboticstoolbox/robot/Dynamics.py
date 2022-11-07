@@ -594,9 +594,20 @@ class DynamicsMixin:
 
         p = getvector(p, 3, out="col")
         lastlink = self.links[self.n - 1]
+        if self.base_payload is None:
+            self.base_payload = lastlink.m
+            self.base_payload_r = lastlink.r
 
-        lastlink.m = m
-        lastlink.r = p
+        lastlink.m = self.base_payload
+        lastlink.r = self.base_payload_r
+        if m > 0:
+            prev_m = lastlink.m
+            prev_r = lastlink.r
+            prev_ratio = prev_m/(prev_m + m)
+            new_ratio = m / (prev_m + m)
+
+            lastlink.m = m
+            lastlink.r = np.add( np.multiply(prev_r, prev_ratio), np.multiply(p.T[0], new_ratio))
 
     def jointdynamics(self, q, qd=None):
         """

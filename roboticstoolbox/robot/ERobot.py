@@ -46,7 +46,7 @@ from spatialmath import (
 from functools import lru_cache
 from typing import Union, overload, Dict, List, Tuple, Optional
 from copy import deepcopy
-
+import numpy as np
 ArrayLike = Union[list, ndarray, tuple, set]
 
 
@@ -128,7 +128,8 @@ class BaseERobot(Robot):
         self._path_cache_fknm = {}
         self._path_cache = {}
         self._eye_fknm = eye(4)
-
+        self.base_payload = None
+        self.base_payload_r = None
         self._linkdict = {}
         self._n = 0
         self._ee_links = []
@@ -1674,9 +1675,9 @@ class ERobot(BaseERobot):
         :param J0: The manipulator Jacobian in the 0 frame
         :param tool: a static tool transformation matrix to apply to the
             end of end, defaults to None
-        
+
         :return: The manipulator Hessian in 0 frame
-        
+
         This method computes the manipulator Hessian in the base frame.  If
         we take the time derivative of the differential kinematic relationship
         .. math::
@@ -1696,7 +1697,7 @@ class ERobot(BaseERobot):
         Similarly, we can write
         .. math::
             \mat{J}_{i,j} = \frac{d u_i}{d q_j}
-        
+
         :references:
             - Kinematic Derivatives using the Elementary Transform
               Sequence, J. Haviland and P. Corke
@@ -1727,9 +1728,9 @@ class ERobot(BaseERobot):
         :param Je: The manipulator Jacobian in the ee frame
         :param tool: a static tool transformation matrix to apply to the
             end of end, defaults to None
-        
+
         :return: The manipulator Hessian in ee frame
-        
+
         This method computes the manipulator Hessian in the ee frame.  If
         we take the time derivative of the differential kinematic relationship
         .. math::
@@ -1749,7 +1750,7 @@ class ERobot(BaseERobot):
         Similarly, we can write
         .. math::
             \mat{J}_{i,j} = \frac{d u_i}{d q_j}
-        
+
         :references:
             - Kinematic Derivatives using the Elementary Transform
               Sequence, J. Haviland and P. Corke
@@ -2064,14 +2065,14 @@ class ERobot(BaseERobot):
         # somehow merged with the joint?
 
         # A temp variable to handle static joints
-        Ts = SE3()
+        Ts = SE3(np.eye(4, dtype="O"), check=False)
 
         # A counter through joints
         j = 0
 
-        # initialize intermediate variables
         for link in self.links:
             if link.isjoint:
+                # print(link.m, link.name)
                 I[j] = SpatialInertia(m=link.m, r=link.r)
                 if symbolic and link.Ts is None:
                     Xtree[j] = SE3(eye(4, dtype="O"), check=False)
@@ -2089,38 +2090,39 @@ class ERobot(BaseERobot):
             else:
                 # TODO Keep track of inertia and transform???
                 Ts *= SE3(link.Ts, check=False)
-
         if gravity is None:
             a_grav = -SpatialAcceleration(self.gravity)
         else:
             a_grav = -SpatialAcceleration(gravity)
-
+        j = 0
         # forward recursion
-        for j in range(0, n):
-            vJ = SpatialVelocity(s[j] * qd[j])
+        for link in self.links:
+            if link.isjoint:
+                vJ = SpatialVelocity(s[j] * qd[j])
+                # l0 -> l1
+                # transform from parent(j) to j
+                Xup[j] = link.parent.A(q[j]).inv()
+                if link.parent is None or link.parent.jindex is None:
+                    v[j] = vJ
+                    a[j] = Xup[j] * a_grav + SpatialAcceleration(s[j] * qdd[j])
+                else:
+                    jp = link.parent.jindex  # type: ignore
+                    v[j] = Xup[j] * v[jp] + vJ
+                    a[j] = Xup[j] * a[jp] + SpatialAcceleration(s[j] * qdd[j]) + v[j] @ vJ
 
-            # transform from parent(j) to j
-            Xup[j] = SE3(self.links[j].A(q[j])).inv()
-
-            if self.links[j].parent is None:
-                v[j] = vJ
-                a[j] = Xup[j] * a_grav + SpatialAcceleration(s[j] * qdd[j])
-            else:
-                jp = self.links[j].parent.jindex  # type: ignore
-                v[j] = Xup[j] * v[jp] + vJ
-                a[j] = Xup[j] * a[jp] + SpatialAcceleration(s[j] * qdd[j]) + v[j] @ vJ
-
-            f[j] = I[j] * a[j] + v[j] @ (I[j] * v[j])
-
+                f[j] = I[j] * a[j] + v[j] @ (I[j] * v[j])
+                j+=1
+        j = n - 1
         # backward recursion
-        for j in reversed(range(0, n)):
+        for link in reversed(self.links):
+            if link.isjoint:
+                # next line could be dot(), but fails for symbolic arguments
+                Q[j] = sum(s[j].T * f[j])
 
-            # next line could be dot(), but fails for symbolic arguments
-            Q[j] = sum(f[j].A * s[j])
-
-            if self.links[j].parent is not None:
-                jp = self.links[j].parent.jindex  # type: ignore
-                f[jp] = f[jp] + Xup[j] * f[j]
+                if link.parent is not None and link.parent.jindex is not None:
+                    jp = link.parent.jindex  # type: ignore
+                    f[jp] = f[jp] + Xup[j] * f[j]
+                j-=1
 
         return Q
 
