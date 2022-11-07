@@ -2069,7 +2069,7 @@ class ERobot(BaseERobot):
 
         # A counter through joints
         j = 0
-
+        i = 0
         for link in self.links:
             if link.isjoint:
                 # print(link.m, link.name)
@@ -2090,6 +2090,7 @@ class ERobot(BaseERobot):
             else:
                 # TODO Keep track of inertia and transform???
                 Ts *= SE3(link.Ts, check=False)
+            i+=1
         if gravity is None:
             a_grav = -SpatialAcceleration(self.gravity)
         else:
@@ -2101,7 +2102,8 @@ class ERobot(BaseERobot):
                 vJ = SpatialVelocity(s[j] * qd[j])
                 # l0 -> l1
                 # transform from parent(j) to j
-                Xup[j] = link.parent.A(q[j]).inv()
+                Xup[j] = link.A(q[j]).inv()
+
                 if link.parent is None or link.parent.jindex is None:
                     v[j] = vJ
                     a[j] = Xup[j] * a_grav + SpatialAcceleration(s[j] * qdd[j])
@@ -2113,6 +2115,7 @@ class ERobot(BaseERobot):
                 f[j] = I[j] * a[j] + v[j] @ (I[j] * v[j])
                 j+=1
         j = n - 1
+
         # backward recursion
         for link in reversed(self.links):
             if link.isjoint:
